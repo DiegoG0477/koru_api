@@ -4,19 +4,17 @@ import { UpdateUserUseCase } from "../application/use-cases/UpdateUserUseCase";
 import { GetUserByIdController } from "./controllers/GetUserByIdController";
 import { UpdateUserController } from "./controllers/UpdateUserController";
 import { MysqlUserRepository } from "./adapters/MysqlUserRepository";
-import { FirebaseStorageService } from "../../shared/cloudstorage/FirebaseStorageService";
+import { cloudinaryStorageService } from "../../shared/cloudstorage/cloudinary.dependencies";
 
 // --- Instanciaciones ---
 export const mysqlUserRepository = new MysqlUserRepository();
-export const firebaseStorageService = new FirebaseStorageService(); // Instanciar Storage Service
-
 export const getUserByIdUseCase = new GetUserByIdUseCase(
     mysqlUserRepository
 );
 
 export const updateUserUseCase = new UpdateUserUseCase(
     mysqlUserRepository,
-    firebaseStorageService // Inyectar Storage Service
+    cloudinaryStorageService
 );
 
 export const getUserByIdController = new GetUserByIdController(getUserByIdUseCase);

@@ -25,7 +25,7 @@ import { GetBusinessFeedController } from "./controllers/GetBusinessFeedControll
 import { MysqlBusinessRepository } from "./repository/MysqlBusinessRepository";
 
 // Importar dependencias necesarias
-import { firebaseStorageService } from "../../shared/cloudstorage/firebaseStorage.dependencies";
+import { cloudinaryStorageService } from "../../shared/cloudstorage/cloudinary.dependencies";
 import { mysqlUserRepository } from "../../user/infrastructure/user.dependencies";
 
 // --- Instanciación del Repositorio ---
@@ -34,9 +34,9 @@ import { mysqlUserRepository } from "../../user/infrastructure/user.dependencies
 export const mysqlBusinessRepository = new MysqlBusinessRepository(); // <- Nueva versión
 
 // --- Instanciación de Casos de Uso ---
-export const addBusinessUseCase = new AddBusinessUseCase(mysqlBusinessRepository, firebaseStorageService);
+export const addBusinessUseCase = new AddBusinessUseCase(mysqlBusinessRepository, cloudinaryStorageService);
 export const getBusinessDetailsUseCase = new GetBusinessDetailsUseCase(mysqlBusinessRepository);
-export const updateBusinessUseCase = new UpdateBusinessUseCase(mysqlBusinessRepository, firebaseStorageService);
+export const updateBusinessUseCase = new UpdateBusinessUseCase(mysqlBusinessRepository, cloudinaryStorageService);
 //export const deleteBusinessUseCase = new DeleteBusinessUseCase(mysqlBusinessRepository, firebaseStorageService);
 export const deleteBusinessUseCase = new DeleteBusinessUseCase(mysqlBusinessRepository);
 // export const getMyBusinessesUseCase = new GetMyBusinessesUseCase(mysqlBusinessRepository); // Ya no se usa directamente por el controller
