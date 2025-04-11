@@ -475,37 +475,12 @@ export class MysqlBusinessRepository implements BusinessRepository {
         requestingUserId?: string
     ): Promise<PaginatedResult<Business> | null> {
         const offset = (page - 1) * limit;
-        const numericUserId = requestingUserId ? parseInt(requestingUserId, 10) : NaN; // Use NaN for easier check
+        const numericUserId = requestingUserId ? parseInt(requestingUserId, 10) : NaN;
 
-        // Base SQL with necessary fields for Business model + joins for filtering/display names
-        let sql = `
-            SELECT
-                b.*
-                ${requestingUserId && !isNaN(numericUserId) ? `,
-                (SELECT COUNT(*) > 0 FROM user_liked_businesses ul_user WHERE ul_user.business_id = b.id AND ul_user.user_id = ?) AS isLikedByUser,
-                (SELECT COUNT(*) > 0 FROM user_saved_businesses us_user WHERE us_user.business_id = b.id AND us_user.user_id = ?) AS isSavedByUser
-                ` : ''}
-                 ,
-                 (SELECT COUNT(*) FROM user_liked_businesses ul WHERE ul.business_id = b.id) AS likeCount,
-                 (SELECT COUNT(*) FROM user_saved_businesses us WHERE us.business_id = b.id) AS savedCount
-            FROM businesses b
-            LEFT JOIN categories c ON b.category_id = c.id
-            LEFT JOIN municipalities m ON b.municipality_id = m.id
-            LEFT JOIN states s ON m.state_id = s.id
-            LEFT JOIN users u ON b.owner_id = u.id
-        `;
-
+        // --- Construcción de Cláusulas WHERE y Parámetros de Filtro ---
         const whereClauses: string[] = [];
-        const filterParams: any[] = []; // Params ONLY for filtering (for count query)
-        const mainQueryParams: any[] = []; // Params for the main query
+        const filterParams: any[] = []; // Solo para los filtros del WHERE
 
-        // Add user ID params FIRST if they exist for the main query
-        if (!isNaN(numericUserId)) {
-            mainQueryParams.push(numericUserId); // For isLikedByUser
-            mainQueryParams.push(numericUserId); // For isSavedByUser
-        }
-
-        // Add filters dynamically
         if (filters.category_id) {
             whereClauses.push("b.category_id = ?");
             filterParams.push(filters.category_id);
@@ -514,87 +489,121 @@ export class MysqlBusinessRepository implements BusinessRepository {
             whereClauses.push("b.investment <= ?");
             filterParams.push(filters.max_investment);
         }
-        // Add 'nearby' filter logic here if implemented
+        // if (filters.nearby === true && ...) { ... }
+        // ... otros filtros ...
 
-        // Append WHERE clause if filters exist
-        if (whereClauses.length > 0) {
-            sql += ` WHERE ${whereClauses.join(" AND ")}`;
+        const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+        // --- Query de Conteo ---
+        // Usar los mismos JOINs que la query principal si los filtros dependen de ellos
+        let countSql = `
+            SELECT COUNT(b.id) as total
+            FROM businesses b
+            LEFT JOIN categories c ON b.category_id = c.id
+            LEFT JOIN municipalities m ON b.municipality_id = m.id
+            LEFT JOIN states s ON m.state_id = s.id
+            ${whereSql}
+        `;
+
+        // --- Query Principal ---
+        let mainSql = `
+            SELECT
+                b.*,
+                c.name AS categoryName,
+                m.name AS municipalityName,
+                s.name AS stateName,
+                u.id AS ownerInfo_userId,
+                u.first_name AS ownerInfo_firstName,
+                u.last_name AS ownerInfo_lastName,
+                u.profile_image_url AS ownerInfo_profileImageUrl,
+                COALESCE((SELECT COUNT(*) FROM user_liked_businesses ul WHERE ul.business_id = b.id), 0) AS likeCount,
+                COALESCE((SELECT COUNT(*) FROM user_saved_businesses us WHERE us.business_id = b.id), 0) AS savedCount
+                ${!isNaN(numericUserId) ? `,
+                (SELECT COUNT(*) > 0 FROM user_liked_businesses ul_user WHERE ul_user.business_id = b.id AND ul_user.user_id = ?) AS isLikedByUser,
+                (SELECT COUNT(*) > 0 FROM user_saved_businesses us_user WHERE us_user.business_id = b.id AND us_user.user_id = ?) AS isSavedByUser
+                ` : ''}
+            FROM businesses b
+            LEFT JOIN categories c ON b.category_id = c.id
+            LEFT JOIN municipalities m ON b.municipality_id = m.id
+            LEFT JOIN states s ON m.state_id = s.id
+            LEFT JOIN users u ON b.owner_id = u.id
+            ${whereSql}
+            ORDER BY b.created_at DESC
+            LIMIT ? OFFSET ?
+        `;
+
+        // --- Construcción de Parámetros para Query Principal ---
+        const mainQueryParams: any[] = [];
+        if (!isNaN(numericUserId)) {
+            mainQueryParams.push(numericUserId); // Para isLikedByUser
+            mainQueryParams.push(numericUserId); // Para isSavedByUser
         }
-
-        // Construct count query
-        let countSql = `SELECT COUNT(*) as total FROM businesses b `;
-         // Add necessary joins ONLY if they are needed for WHERE clauses
-         // Example: if filtering by category name (c.name = ?) you'd need the join
-         // if (filters.category_id) { countSql += `LEFT JOIN categories c ON b.category_id = c.id `; }
-         if (whereClauses.length > 0) {
-            countSql += ` WHERE ${whereClauses.join(" AND ")}`; // Use the same WHERE clauses
-         }
-
-        // Add ORDER BY and LIMIT/OFFSET to the main query
-        sql += ` ORDER BY b.created_at DESC LIMIT ? OFFSET ?`;
-
-        // Add filterParams and pagination params to the mainQueryParams
-        mainQueryParams.push(...filterParams); // Add filter params after user IDs
-        mainQueryParams.push(limit, offset);   // Add limit and offset last
+        mainQueryParams.push(...filterParams); // Añadir parámetros de filtro
+        mainQueryParams.push(limit, offset);   // Añadir paginación
 
         try {
-             // Execute count query with ONLY filterParams
-             const countResultQuery: any = await query(countSql, filterParams); // <-- Use filterParams here
-             const countResult = countResultQuery && countResultQuery[0] ? countResultQuery[0][0] : null;
-             if (!countResult) throw new Error("Count query failed or returned invalid result.");
-             const totalItems = Number(countResult.total) || 0;
+            // Ejecutar query de conteo (solo con parámetros de filtro)
+            const countResultQuery: any = await query(countSql, filterParams); // <-- CORRECTO
+            const countResult = countResultQuery?.[0]?.[0];
+            if (!countResult || countResult.total === undefined) {
+                throw new Error("Count query failed or returned invalid structure.");
+            }
+            const totalItems = Number(countResult.total) || 0;
 
-            // Execute main query with all params
-            const mainResultQuery: any = await query(sql, mainQueryParams);
+            // Si no hay items, devolver resultado vacío inmediatamente
+            if (totalItems === 0) {
+                return { items: [], hasMore: false, nextPage: null, totalItems: 0, totalPages: 0 };
+            }
+
+            // Ejecutar query principal (con todos los parámetros ordenados)
+            const mainResultQuery: any = await query(mainSql, mainQueryParams); // <-- CORRECTO
             if (!mainResultQuery || !mainResultQuery[0]) {
-                 console.warn("Main feed query returned null or no rows array.");
-                 // Return empty result if count was 0, otherwise it might be an error
-                 if(totalItems === 0) {
-                    return { items: [], hasMore: false, nextPage: null, totalItems: 0 };
-                 } else {
-                    throw new Error("Main feed query returned null or empty despite count > 0.");
-                 }
-             }
-             const rows = mainResultQuery[0];
+                 console.warn("Main feed query returned null or no rows array despite count > 0.");
+                 // Considerar esto un error si el conteo fue > 0
+                 throw new Error("Main feed query failed or returned no rows unexpectedly.");
+            }
+            const rows = mainResultQuery[0];
 
-             // Mapear resultados a la entidad Business
-             const businesses = rows.map((row: any) => new Business(
-                 row.id.toString(),
-                 row.owner_id.toString(),
-                 row.name,
-                 row.description,
-                 parseFloat(row.investment),
-                 parseFloat(row.profit_percentage),
-                 row.category_id,
-                 row.municipality_id,
-                 row.business_model,
-                 parseFloat(row.monthly_income),
-                 row.image_url,
-                 // Safely access isSaved/isLiked - they only exist if userId was provided
-                 requestingUserId ? Boolean(row.isSavedByUser) : undefined,
-                 requestingUserId ? Boolean(row.isLikedByUser) : undefined,
-                 Number(row.savedCount) || 0, // Use count result directly
-                 Number(row.likeCount) || 0,  // Use count result directly
-                 row.created_at,
-                 row.updated_at
-             ));
+            // Mapear resultados a la entidad Business
+            const businesses = rows.map((row: any) => new Business(
+                row.id.toString(),
+                row.owner_id.toString(),
+                row.name,
+                row.description,
+                parseFloat(row.investment),
+                parseFloat(row.profit_percentage),
+                row.category_id,
+                row.municipality_id,
+                row.business_model,
+                parseFloat(row.monthly_income),
+                row.image_url,
+                // Usar COALESCE o similar en SQL es más robusto que depender de que el campo exista en JS
+                requestingUserId ? Boolean(row.isSavedByUser) : undefined, // isSavedByUser puede no existir si no hay userId
+                requestingUserId ? Boolean(row.isLikedByUser) : undefined, // isLikedByUser puede no existir si no hay userId
+                Number(row.savedCount) || 0,
+                Number(row.likeCount) || 0,
+                row.created_at,
+                row.updated_at
+            ));
 
-             const hasMore = (offset + businesses.length) < totalItems;
-             const nextPage = hasMore ? page + 1 : null;
+            const hasMore = (offset + businesses.length) < totalItems;
+            const nextPage = hasMore ? page + 1 : null;
 
-             return {
-                 items: businesses,
-                 hasMore: hasMore,
-                 nextPage: nextPage,
-                 totalItems: totalItems,
-                 totalPages: Math.ceil(totalItems / limit)
-             };
+            return {
+                items: businesses,
+                hasMore: hasMore,
+                nextPage: nextPage,
+                totalItems: totalItems,
+                totalPages: Math.ceil(totalItems / limit)
+            };
 
         } catch (error) {
+            if (error instanceof BusinessUpdateError) throw error;
             console.error("MySQL Error fetching business feed:", error);
-            return null; // Indicate failure
+            // Lanzar un error genérico de base de datos en lugar de retornar null directamente
+            throw new BusinessUpdateError(BusinessUpdateErrorType.DatabaseError, "Database error fetching business feed.");
+            // return null; // Evitar devolver null aquí, dejar que el UseCase/Controller maneje la excepción
         }
     }
-    // --- Fin getBusinessFeed ---
 
 } // Fin Class

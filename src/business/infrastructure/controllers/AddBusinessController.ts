@@ -31,7 +31,7 @@ export class AddBusinessController {
             investment: data.investment !== undefined ? Number(data.investment) : undefined,
             profitPercentage: data.profitPercentage !== undefined ? Number(data.profitPercentage) : undefined,
             categoryId: data.categoryId !== undefined ? Number(data.categoryId) : undefined,
-            municipalityId: data.municipalityId !== undefined ? Number(data.municipalityId) : undefined,
+            municipalityId: data.municipalityId !== undefined ? String(data.municipalityId) : undefined,
             monthlyIncome: data.monthlyIncome !== undefined ? Number(data.monthlyIncome) : undefined,
         };
 

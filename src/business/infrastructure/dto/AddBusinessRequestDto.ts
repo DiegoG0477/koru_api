@@ -15,7 +15,7 @@ export interface AddBusinessRequestDto {
     /** ID numérico de la categoría (se espera como número) */
     categoryId: number;
     /** ID (string o número) del municipio (se espera como número según .kt) */
-    municipalityId: number; // Ajustado a number para coincidir con .kt
+    municipalityId: string; // Ajustado a number para coincidir con .kt
     businessModel: string;
     /** Ingresos mensuales estimados (se espera como número) */
     monthlyIncome: number;
@@ -34,7 +34,7 @@ export function isValidAddBusinessRequest(data: any): data is AddBusinessRequest
         typeof data.investment === 'number' && data.investment >= 0 &&
         typeof data.profitPercentage === 'number' && data.profitPercentage >= 0 &&
         typeof data.categoryId === 'number' && Number.isInteger(data.categoryId) && data.categoryId > 0 &&
-        typeof data.municipalityId === 'number' && Number.isInteger(data.municipalityId) && data.municipalityId > 0 && // Ajustado a number
+        typeof data.municipalityId === 'string',
         typeof data.businessModel === 'string' && data.businessModel.trim() !== '' &&
         typeof data.monthlyIncome === 'number' && data.monthlyIncome >= 0 &&
         (data.imageUrl === undefined || data.imageUrl === null || typeof data.imageUrl === 'string')
