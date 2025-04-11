@@ -469,43 +469,38 @@ export class MysqlBusinessRepository implements BusinessRepository {
      }
 
      async getBusinessFeed(
-        filters: Record<string, any>,
-        page: number,
-        limit: number,
+        filters: Record<string, any>, // Parameter kept for signature, but not used for filtering
+        page: number,              // Parameter kept for signature, but not used for offsetting
+        limit: number,             // Parameter kept for signature, but not used for limiting results
         requestingUserId?: string
     ): Promise<PaginatedResult<Business> | null> {
-        const offset = (page - 1) * limit;
+        // offset is declared but will not be used in the main query
+        //const offset = (page - 1) * limit;
         const numericUserId = requestingUserId ? parseInt(requestingUserId, 10) : NaN;
 
-        // --- Construcción de Cláusulas WHERE y Parámetros de Filtro ---
-        const whereClauses: string[] = [];
-        const filterParams: any[] = []; // Solo para los filtros del WHERE
+        // --- Construcción de Cláusulas WHERE y Parámetros de Filtro (INTENTIONALLY EMPTY) ---
+        const whereClauses: string[] = []; // Kept empty to fetch all
+        const filterParams: any[] = [];    // Kept empty as no filters are applied
 
-        if (filters.category_id) {
-            whereClauses.push("b.category_id = ?");
-            filterParams.push(filters.category_id);
-        }
-        if (filters.max_investment) {
-            whereClauses.push("b.investment <= ?");
-            filterParams.push(filters.max_investment);
-        }
-        // if (filters.nearby === true && ...) { ... }
-        // ... otros filtros ...
+        // --- Filter application logic is SKIPPED ---
+        // if (filters.category_id) { ... } // Skipped
+        // if (filters.max_investment) { ... } // Skipped
 
+        // whereSql will be an empty string as whereClauses is empty
         const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
-        // --- Query de Conteo ---
-        // Usar los mismos JOINs que la query principal si los filtros dependen de ellos
+        // --- Query de Conteo (Counts ALL businesses as whereSql is empty) ---
+        // JOINs are kept as in the original structure, though might be redundant without filters
         let countSql = `
             SELECT COUNT(b.id) as total
             FROM businesses b
             LEFT JOIN categories c ON b.category_id = c.id
             LEFT JOIN municipalities m ON b.municipality_id = m.id
             LEFT JOIN states s ON m.state_id = s.id
-            ${whereSql}
+            -- ${whereSql} will be empty here --
         `;
 
-        // --- Query Principal ---
+        // --- Query Principal (Fetches ALL businesses, ignores pagination) ---
         let mainSql = `
             SELECT
                 b.*,
@@ -527,40 +522,44 @@ export class MysqlBusinessRepository implements BusinessRepository {
             LEFT JOIN municipalities m ON b.municipality_id = m.id
             LEFT JOIN states s ON m.state_id = s.id
             LEFT JOIN users u ON b.owner_id = u.id
-            ${whereSql}
+            -- ${whereSql} will be empty here --
             ORDER BY b.created_at DESC
-            LIMIT ? OFFSET ?
+            -- LIMIT ? OFFSET ? is REMOVED to fetch all --
         `;
 
-        // --- Construcción de Parámetros para Query Principal ---
+        // --- Construcción de Parámetros para Query Principal (Only UserID if needed) ---
         const mainQueryParams: any[] = [];
         if (!isNaN(numericUserId)) {
-            mainQueryParams.push(numericUserId); // Para isLikedByUser
-            mainQueryParams.push(numericUserId); // Para isSavedByUser
+            mainQueryParams.push(numericUserId); // For isLikedByUser
+            mainQueryParams.push(numericUserId); // For isSavedByUser
         }
-        mainQueryParams.push(...filterParams); // Añadir parámetros de filtro
-        mainQueryParams.push(limit, offset);   // Añadir paginación
+        // --- Filter and Pagination params are NOT added ---
+        // mainQueryParams.push(...filterParams); // Skipped
+        // mainQueryParams.push(limit, offset);   // Skipped
 
         try {
-            // Ejecutar query de conteo (solo con parámetros de filtro)
-            const countResultQuery: any = await query(countSql, filterParams); // <-- CORRECTO
+            // Ejecutar query de conteo (filterParams is empty, counts all)
+            const countResultQuery: any = await query(countSql, filterParams); // filterParams is []
             const countResult = countResultQuery?.[0]?.[0];
             if (!countResult || countResult.total === undefined) {
-                throw new Error("Count query failed or returned invalid structure.");
+                // Use specific error type
+                console.error("Count query failed or returned invalid structure:", countResultQuery);
+                throw new BusinessUpdateError(BusinessUpdateErrorType.DatabaseError, "Count query failed or returned invalid structure.");
             }
             const totalItems = Number(countResult.total) || 0;
 
             // Si no hay items, devolver resultado vacío inmediatamente
             if (totalItems === 0) {
+                // Return structure matching PaginatedResult
                 return { items: [], hasMore: false, nextPage: null, totalItems: 0, totalPages: 0 };
             }
 
-            // Ejecutar query principal (con todos los parámetros ordenados)
-            const mainResultQuery: any = await query(mainSql, mainQueryParams); // <-- CORRECTO
-            if (!mainResultQuery || !mainResultQuery[0]) {
+            // Ejecutar query principal (mainQueryParams only has userIds if applicable)
+            const mainResultQuery: any = await query(mainSql, mainQueryParams);
+            if (!mainResultQuery || !Array.isArray(mainResultQuery[0])) {
                  console.warn("Main feed query returned null or no rows array despite count > 0.");
-                 // Considerar esto un error si el conteo fue > 0
-                 throw new Error("Main feed query failed or returned no rows unexpectedly.");
+                 // Use specific error type
+                 throw new BusinessUpdateError(BusinessUpdateErrorType.DatabaseError, "Main feed query failed or returned no rows unexpectedly.");
             }
             const rows = mainResultQuery[0];
 
@@ -577,33 +576,178 @@ export class MysqlBusinessRepository implements BusinessRepository {
                 row.business_model,
                 parseFloat(row.monthly_income),
                 row.image_url,
-                // Usar COALESCE o similar en SQL es más robusto que depender de que el campo exista en JS
-                requestingUserId ? Boolean(row.isSavedByUser) : undefined, // isSavedByUser puede no existir si no hay userId
-                requestingUserId ? Boolean(row.isLikedByUser) : undefined, // isLikedByUser puede no existir si no hay userId
+                requestingUserId ? Boolean(row.isSavedByUser) : undefined,
+                requestingUserId ? Boolean(row.isLikedByUser) : undefined,
                 Number(row.savedCount) || 0,
                 Number(row.likeCount) || 0,
                 row.created_at,
                 row.updated_at
+                // Pass joined data if the Business entity needs it
+                // ...
             ));
 
-            const hasMore = (offset + businesses.length) < totalItems;
-            const nextPage = hasMore ? page + 1 : null;
+            // --- Calculate pagination fields based on ALL results being fetched ---
+            // Since we fetched all items, hasMore is always false, nextPage is null,
+            // and totalPages is 1 (if items exist).
+            const totalPages = totalItems > 0 ? 1 : 0; // Only one page containing all items
+            const hasMore = false; // No more pages after this one
+            const nextPage = null;  // No next page number
 
-            return {
+            // Return the PaginatedResult containing all businesses
+            const result: PaginatedResult<Business> = {
                 items: businesses,
+                totalItems: totalItems, // Total count from the count query
+                totalPages: totalPages,
                 hasMore: hasMore,
                 nextPage: nextPage,
-                totalItems: totalItems,
-                totalPages: Math.ceil(totalItems / limit)
+                // Optional: include page/limit if your type requires it,
+                // setting them to reflect the "single page" nature
+                // page: 1,
+                // limit: totalItems > 0 ? totalItems : limit // or just use the input limit
             };
 
+            return result;
+
         } catch (error) {
-            if (error instanceof BusinessUpdateError) throw error;
-            console.error("MySQL Error fetching business feed:", error);
-            // Lanzar un error genérico de base de datos en lugar de retornar null directamente
+            // Catch specific known errors first
+            if (error instanceof BusinessUpdateError) {
+                 throw error;
+            }
+            // Log generic errors and throw a typed error
+            console.error("MySQL Error fetching business feed (all items mode):", error);
             throw new BusinessUpdateError(BusinessUpdateErrorType.DatabaseError, "Database error fetching business feed.");
-            // return null; // Evitar devolver null aquí, dejar que el UseCase/Controller maneje la excepción
+            // return null; // Avoid returning null for database errors
         }
     }
+}
+    //     const offset = (page - 1) * limit;
+    //     const numericUserId = requestingUserId ? parseInt(requestingUserId, 10) : NaN;
 
-} // Fin Class
+    //     // --- Construcción de Cláusulas WHERE y Parámetros de Filtro ---
+    //     const whereClauses: string[] = [];
+    //     const filterParams: any[] = []; // Solo para los filtros del WHERE
+
+    //     if (filters.category_id) {
+    //         whereClauses.push("b.category_id = ?");
+    //         filterParams.push(filters.category_id);
+    //     }
+    //     if (filters.max_investment) {
+    //         whereClauses.push("b.investment <= ?");
+    //         filterParams.push(filters.max_investment);
+    //     }
+    //     // if (filters.nearby === true && ...) { ... }
+    //     // ... otros filtros ...
+
+    //     const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
+
+    //     // --- Query de Conteo ---
+    //     // Usar los mismos JOINs que la query principal si los filtros dependen de ellos
+    //     let countSql = `
+    //         SELECT COUNT(b.id) as total
+    //         FROM businesses b
+    //         LEFT JOIN categories c ON b.category_id = c.id
+    //         LEFT JOIN municipalities m ON b.municipality_id = m.id
+    //         LEFT JOIN states s ON m.state_id = s.id
+    //         ${whereSql}
+    //     `;
+
+    //     // --- Query Principal ---
+    //     let mainSql = `
+    //         SELECT
+    //             b.*,
+    //             c.name AS categoryName,
+    //             m.name AS municipalityName,
+    //             s.name AS stateName,
+    //             u.id AS ownerInfo_userId,
+    //             u.first_name AS ownerInfo_firstName,
+    //             u.last_name AS ownerInfo_lastName,
+    //             u.profile_image_url AS ownerInfo_profileImageUrl,
+    //             COALESCE((SELECT COUNT(*) FROM user_liked_businesses ul WHERE ul.business_id = b.id), 0) AS likeCount,
+    //             COALESCE((SELECT COUNT(*) FROM user_saved_businesses us WHERE us.business_id = b.id), 0) AS savedCount
+    //             ${!isNaN(numericUserId) ? `,
+    //             (SELECT COUNT(*) > 0 FROM user_liked_businesses ul_user WHERE ul_user.business_id = b.id AND ul_user.user_id = ?) AS isLikedByUser,
+    //             (SELECT COUNT(*) > 0 FROM user_saved_businesses us_user WHERE us_user.business_id = b.id AND us_user.user_id = ?) AS isSavedByUser
+    //             ` : ''}
+    //         FROM businesses b
+    //         LEFT JOIN categories c ON b.category_id = c.id
+    //         LEFT JOIN municipalities m ON b.municipality_id = m.id
+    //         LEFT JOIN states s ON m.state_id = s.id
+    //         LEFT JOIN users u ON b.owner_id = u.id
+    //         ${whereSql}
+    //         ORDER BY b.created_at DESC
+    //         LIMIT ? OFFSET ?
+    //     `;
+
+    //     // --- Construcción de Parámetros para Query Principal ---
+    //     const mainQueryParams: any[] = [];
+    //     if (!isNaN(numericUserId)) {
+    //         mainQueryParams.push(numericUserId); // Para isLikedByUser
+    //         mainQueryParams.push(numericUserId); // Para isSavedByUser
+    //     }
+    //     mainQueryParams.push(...filterParams); // Añadir parámetros de filtro
+    //     mainQueryParams.push(limit, offset);   // Añadir paginación
+
+    //     try {
+    //         // Ejecutar query de conteo (solo con parámetros de filtro)
+    //         const countResultQuery: any = await query(countSql, filterParams); // <-- CORRECTO
+    //         const countResult = countResultQuery?.[0]?.[0];
+    //         if (!countResult || countResult.total === undefined) {
+    //             throw new Error("Count query failed or returned invalid structure.");
+    //         }
+    //         const totalItems = Number(countResult.total) || 0;
+
+    //         // Si no hay items, devolver resultado vacío inmediatamente
+    //         if (totalItems === 0) {
+    //             return { items: [], hasMore: false, nextPage: null, totalItems: 0, totalPages: 0 };
+    //         }
+
+    //         // Ejecutar query principal (con todos los parámetros ordenados)
+    //         const mainResultQuery: any = await query(mainSql, mainQueryParams); // <-- CORRECTO
+    //         if (!mainResultQuery || !mainResultQuery[0]) {
+    //              console.warn("Main feed query returned null or no rows array despite count > 0.");
+    //              // Considerar esto un error si el conteo fue > 0
+    //              throw new Error("Main feed query failed or returned no rows unexpectedly.");
+    //         }
+    //         const rows = mainResultQuery[0];
+
+    //         // Mapear resultados a la entidad Business
+    //         const businesses = rows.map((row: any) => new Business(
+    //             row.id.toString(),
+    //             row.owner_id.toString(),
+    //             row.name,
+    //             row.description,
+    //             parseFloat(row.investment),
+    //             parseFloat(row.profit_percentage),
+    //             row.category_id,
+    //             row.municipality_id,
+    //             row.business_model,
+    //             parseFloat(row.monthly_income),
+    //             row.image_url,
+    //             // Usar COALESCE o similar en SQL es más robusto que depender de que el campo exista en JS
+    //             requestingUserId ? Boolean(row.isSavedByUser) : undefined, // isSavedByUser puede no existir si no hay userId
+    //             requestingUserId ? Boolean(row.isLikedByUser) : undefined, // isLikedByUser puede no existir si no hay userId
+    //             Number(row.savedCount) || 0,
+    //             Number(row.likeCount) || 0,
+    //             row.created_at,
+    //             row.updated_at
+    //         ));
+
+    //         const hasMore = (offset + businesses.length) < totalItems;
+    //         const nextPage = hasMore ? page + 1 : null;
+
+    //         return {
+    //             items: businesses,
+    //             hasMore: hasMore,
+    //             nextPage: nextPage,
+    //             totalItems: totalItems,
+    //             totalPages: Math.ceil(totalItems / limit)
+    //         };
+
+    //     } catch (error) {
+    //         if (error instanceof BusinessUpdateError) throw error;
+    //         console.error("MySQL Error fetching business feed:", error);
+    //         // Lanzar un error genérico de base de datos en lugar de retornar null directamente
+    //         throw new BusinessUpdateError(BusinessUpdateErrorType.DatabaseError, "Database error fetching business feed.");
+    //         // return null; // Evitar devolver null aquí, dejar que el UseCase/Controller maneje la excepción
+    //     }
+    // }
