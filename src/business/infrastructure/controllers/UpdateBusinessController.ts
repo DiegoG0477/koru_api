@@ -38,7 +38,7 @@ export class UpdateBusinessController {
             investment: requestBodyData.investment !== undefined ? Number(requestBodyData.investment) : undefined,
             profitPercentage: requestBodyData.profitPercentage !== undefined ? Number(requestBodyData.profitPercentage) : undefined,
             categoryId: requestBodyData.categoryId !== undefined ? Number(requestBodyData.categoryId) : undefined,
-            municipalityId: requestBodyData.municipalityId !== undefined ? Number(requestBodyData.municipalityId) : undefined, // Asegúrate que el DTO espera number
+            //municipalityId: requestBodyData.municipalityId !== undefined ? Number(requestBodyData.municipalityId) : undefined, // Asegúrate que el DTO espera number
             businessModel: requestBodyData.businessModel,
             monthlyIncome: requestBodyData.monthlyIncome !== undefined ? Number(requestBodyData.monthlyIncome) : undefined,
             imageUrl: requestBodyData.imageUrl // Puede ser string, null, o undefined

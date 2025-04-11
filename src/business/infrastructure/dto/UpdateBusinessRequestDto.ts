@@ -16,7 +16,7 @@ export interface UpdateBusinessRequestDto {
     /** ID numérico de la categoría (si se actualiza) */
     categoryId?: number;
     /** ID (string o número) del municipio (si se actualiza, esperado como número) */
-    municipalityId?: number; // Ajustado a number
+    municipalityId?: string; // Ajustado a number
     businessModel?: string;
     /** Ingresos mensuales estimados (si se actualiza) */
     monthlyIncome?: number;
